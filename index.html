@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SAWCANS Dashboard</title>
-  
+
   <!-- Bootstrap -->
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 
@@ -23,6 +23,13 @@
     .status-card { border-radius: 12px; }
     .status-card h6 { margin: 0; font-size: 0.9rem; color: #666; }
     .status-card h4 { margin: 0; font-weight: bold; }
+    #map {
+      height: calc(100vh - 50px); /* leave room for toggle button on mobile */
+    }
+    .sidebar {
+      max-height: 100vh;
+      overflow-y: auto;
+    }
   </style>
 </head>
 <body>
@@ -45,82 +52,50 @@
 
   <!-- === Dashboard === -->
   <div id="dashboardPage" class="container-fluid d-none">
-    <div class="row">
-
+    <div class="row flex-nowrap">
       <!-- Sidebar -->
-      <div class="col-md-3 col-lg-3 sidebar p-3 shadow-sm">
+      <div class="col-12 col-md-3 sidebar p-3 shadow-sm collapse show" id="sidebarMenu">
         <div class="d-flex justify-content-between align-items-center mb-3">
           <h3>🚮 SAWCANS</h3>
           <button class="btn btn-sm btn-danger" onclick="logout()">Logout</button>
         </div>
 
-        <!-- Depot Info -->
-        <div class="card mb-3 p-2 status-card shadow-sm">
-          <h6>Depot Location</h6>
-          <p class="mb-0"><strong>Lat:</strong> <span id="depotLat">-</span></p>
-          <p class="mb-0"><strong>Lng:</strong> <span id="depotLng">-</span></p>
-        </div>
-
-        <!-- Summary Cards -->
-        <div class="row text-center mb-3 g-2">
-          <div class="col-4">
-            <div class="card p-2 shadow-sm status-card">
-              <h6>Total</h6>
-              <h4 id="totalBins">0</h4>
-            </div>
-          </div>
-          <div class="col-4">
-            <div class="card p-2 shadow-sm status-card">
-              <h6 class="text-danger">Full</h6>
-              <h4 id="fullBins">0</h4>
-            </div>
-          </div>
-          <div class="col-4">
-            <div class="card p-2 shadow-sm status-card">
-              <h6 class="text-success">Empty</h6>
-              <h4 id="emptyBins">0</h4>
-            </div>
-          </div>
+        <!-- Bin Status Summary -->
+        <div id="summary" class="bg-white p-3 rounded shadow-sm mb-3">
+          <div><strong>Total:</strong> <span id="totalBins">0</span></div>
+          <div><span class="text-danger">🟥</span> Full: <span id="fullBins">0</span></div>
+          <div><span class="text-warning">🟧</span> Moderate: <span id="moderateBins">0</span></div>
+          <div><span class="text-warning">🟨</span> Low: <span id="lowBins">0</span></div>
+          <div><span class="text-success">🟩</span> Empty: <span id="emptyBins">0</span></div>
         </div>
 
         <!-- Bin List -->
-        <h5 class="mt-3">🗑️ Bin List</h5>
+        <h5>🗑️ Bin List</h5>
         <table class="table table-sm table-striped table-bordered">
           <thead class="table-light">
-            <tr>
-              <th>ID</th>
-              <th>Status</th>
-              <th>Fill</th>
-            </tr>
+            <tr><th>ID</th><th>Status</th><th>Fill</th></tr>
           </thead>
-          <tbody id="binList">
-            <tr>
-              <td>Bin 1</td>
-              <td><span class="badge bg-danger">Full</span></td>
-              <td>90%</td>
-            </tr>
-            <tr>
-              <td>Bin 2</td>
-              <td><span class="badge bg-success">Empty</span></td>
-              <td>10%</td>
-            </tr>
-          </tbody>
+          <tbody id="binList"></tbody>
         </table>
 
         <!-- Controls -->
         <div class="d-grid gap-2 mt-3">
-          <button id="followDepotBtn" class="btn btn-primary">Follow Depot</button>
-          <button id="refreshRouteBtn" class="btn btn-success">Refresh Route</button>
-          <button id="clearRouteBtn" class="btn btn-secondary">Clear Route</button>
+          <button id="toggleFollowDepot" class="btn btn-primary">Follow Depot: OFF</button>
+          <button id="toggleRoute" class="btn btn-success">Show Direction: ON</button>
         </div>
       </div>
 
       <!-- Map -->
-      <div class="col-md-9 col-lg-9 p-0">
+      <div class="col p-0">
+        <!-- Sidebar Toggle Button (only on small screens) -->
+        <button class="btn btn-sm btn-secondary m-2 d-md-none" type="button" 
+                data-bs-toggle="collapse" data-bs-target="#sidebarMenu">
+          ☰ Menu
+        </button>
         <div id="map"></div>
       </div>
-
     </div>
+
   </div>
 
   <!-- Scripts -->
@@ -129,38 +104,130 @@
   <script src="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.js"></script>
 
   <script>
-    // === Login Logic (simple demo) ===
+    let map, depotMarker, routingControl, followDepot = false;
+
+    // === Login Logic ===
     function login() {
       const user = document.getElementById('username').value;
       const pass = document.getElementById('password').value;
-
-      // For demo purposes (hardcoded). Replace with Firebase Auth later.
       if (user === "admin" && pass === "1234") {
         document.getElementById('loginPage').classList.add('d-none');
         document.getElementById('dashboardPage').classList.remove('d-none');
-        initMap(); // load map after login
+        initMap();
       } else {
         alert("Invalid username or password!");
       }
     }
-
     function logout() {
       document.getElementById('dashboardPage').classList.add('d-none');
       document.getElementById('loginPage').classList.remove('d-none');
     }
 
-    // === Map Init (only when logged in) ===
+    // === Bin Data (demo) ===
+    const depot = { lat: 3.139, lng: 101.6869 };
+    const bins = [
+      { id: "Bin 1", status: "Full", fill: 90, lat: 3.145, lng: 101.69 },
+      { id: "Bin 2", status: "Moderate", fill: 60, lat: 3.140, lng: 101.695 },
+      { id: "Bin 3", status: "Low", fill: 30, lat: 3.135, lng: 101.68 },
+      { id: "Bin 4", status: "Empty", fill: 5, lat: 3.130, lng: 101.685 }
+    ];
+
+    // === Icons ===
+    const icons = {
+      Full: L.icon({ iconUrl: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-red.png", iconSize: [25,41], iconAnchor: [12,41] }),
+      Moderate: L.icon({ iconUrl: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-orange.png", iconSize: [25,41], iconAnchor: [12,41] }),
+      Low: L.icon({ iconUrl: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-yellow.png", iconSize: [25,41], iconAnchor: [12,41] }),
+      Empty: L.icon({ iconUrl: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-green.png", iconSize: [25,41], iconAnchor: [12,41] }),
+      Depot: L.icon({ iconUrl: "https://cdn-icons-png.flaticon.com/512/854/854894.png", iconSize: [32,32], iconAnchor: [16,32] })
+    };
+
+    // === Map Init ===
     function initMap() {
-      const map = L.map('map').setView([3.139, 101.6869], 13);
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19,
+      map = L.map('map').setView([depot.lat, depot.lng], 13);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+
+      // Depot
+      depotMarker = L.marker([depot.lat, depot.lng], { icon: icons.Depot }).addTo(map).bindPopup("Depot 🚚");
+
+      // Add bins + waypoints
+      const waypoints = [L.latLng(depot.lat, depot.lng)];
+      bins.forEach(bin => {
+        L.marker([bin.lat, bin.lng], { icon: icons[bin.status] })
+          .addTo(map)
+          .bindPopup(`${bin.id} - ${bin.status} (${bin.fill}%)`);
+        waypoints.push(L.latLng(bin.lat, bin.lng));
+      });
+
+      // Routing
+      routingControl = L.Routing.control({
+        waypoints: waypoints,
+        routeWhileDragging: false
       }).addTo(map);
 
-      // Example markers
-      const depot = L.marker([3.139, 101.6869]).addTo(map).bindPopup("Depot 🚚");
-      const bin1 = L.marker([3.145, 101.69]).addTo(map).bindPopup("Bin 1 - Full");
-      const bin2 = L.marker([3.135, 101.68]).addTo(map).bindPopup("Bin 2 - Empty");
+      loadBins();
+      updateSummary();
+
+      // Controls
+      document.getElementById('toggleFollowDepot').onclick = toggleFollowDepot;
+      document.getElementById('toggleRoute').onclick = toggleRoute;
     }
+
+    // === Follow Depot Toggle ===
+    function toggleFollowDepot() {
+      followDepot = !followDepot;
+      document.getElementById('toggleFollowDepot').innerText = `Follow Depot: ${followDepot ? 'ON' : 'OFF'}`;
+      if (followDepot) {
+        map.setView(depotMarker.getLatLng(), 15);
+      }
+    }
+
+    // === Show/Hide Route ===
+    function toggleRoute() {
+      const btn = document.getElementById('toggleRoute');
+      if (map.hasLayer(routingControl)) {
+        map.removeControl(routingControl);
+        btn.innerText = "Show Direction: OFF";
+      } else {
+        map.addControl(routingControl);
+        btn.innerText = "Show Direction: ON";
+      }
+    }
+
+    // === Bin List UI ===
+    function loadBins() {
+      const tbody = document.getElementById('binList');
+      tbody.innerHTML = "";
+      bins.forEach(bin => {
+        const badgeClass =
+          bin.status === "Full" ? "bg-danger" :
+          bin.status === "Moderate" ? "bg-warning" :
+          bin.status === "Low" ? "bg-warning text-dark" :
+          "bg-success";
+        tbody.innerHTML += `
+          <tr>
+            <td>${bin.id}</td>
+            <td><span class="badge ${badgeClass}">${bin.status}</span></td>
+            <td>${bin.fill}%</td>
+          </tr>`;
+      });
+    }
+
+     // === Summary Update ===
+    function updateSummary() {
+      const total = bins.length;
+      const full = bins.filter(b => b.status === "Full").length;
+      const moderate = bins.filter(b => b.status === "Moderate").length;
+      const low = bins.filter(b => b.status === "Low").length;
+      const empty = bins.filter(b => b.status === "Empty").length;
+
+      document.getElementById("totalBins").textContent = total;
+      document.getElementById("fullBins").textContent = full;
+      document.getElementById("moderateBins").textContent = moderate;
+      document.getElementById("lowBins").textContent = low;
+      document.getElementById("emptyBins").textContent = empty;
+    }
+
+
   </script>
 </body>
 </html>
